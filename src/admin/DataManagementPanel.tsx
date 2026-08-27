@@ -112,7 +112,7 @@ export default function DataManagementPanel({ session }: Props) {
       return;
     }
 
-    setMessage("อัปโหลดสำเร็จ กำลังประมวลผล Dataset เบื้องหลัง");
+    setMessage("ส่ง Dataset เข้าประมวลผลแล้ว ระบบจะอัปเดตสถานะอัตโนมัติ");
     setBusyId(null);
     await loadDatasets();
   }
@@ -310,9 +310,9 @@ export default function DataManagementPanel({ session }: Props) {
               <button className="secondary-button" type="button" onClick={() => void showDetails(dataset)}>
                 รายละเอียด
               </button>
-              {dataset.status === "ERROR" && (
+              {(dataset.status === "ERROR" || dataset.status === "READY") && (
                 <button type="button" disabled={busyId !== null} onClick={() => void processDataset(dataset.id)}>
-                  {busyId === dataset.id ? "กำลังส่งงาน..." : "ลองประมวลผลใหม่"}
+                  {busyId === dataset.id ? "กำลังส่งงาน..." : dataset.status === "READY" ? "ประมวลผลใหม่" : "ลองประมวลผลใหม่"}
                 </button>
               )}
               {dataset.status === "PROCESSING" && <small>กำลังประมวลผลเบื้องหลัง...</small>}
