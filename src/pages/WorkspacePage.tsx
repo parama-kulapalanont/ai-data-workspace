@@ -10,6 +10,16 @@ type RoleRow = {
   role: "USER" | "ADMIN" | "SUPER_ADMIN";
 };
 
+type DatasetRow = {
+  id: string;
+  name: string;
+  description: string | null;
+  source_type: string;
+  status: string;
+  row_count: number;
+  column_count: number;
+};
+
 type AiResponse = {
   ok?: boolean;
   answer?: string;
@@ -25,6 +35,9 @@ type AiResponse = {
 
 export default function WorkspacePage({ session }: Props) {
   const [role, setRole] = useState<string>("กำลังโหลด...");
+  const [datasets, setDatasets] = useState<DatasetRow[]>([]);
+  const [datasetsLoading, setDatasetsLoading] = useState(true);
+  const [datasetsError, setDatasetsError] = useState("");
   const [message, setMessage] = useState("");
   const [answer, setAnswer] = useState("");
   const [errorText, setErrorText] = useState("");
@@ -46,7 +59,30 @@ export default function WorkspacePage({ session }: Props) {
       setRole(data.role);
     }
 
-    loadRole();
+    async function loadDatasets() {
+      setDatasetsLoading(true);
+      setDatasetsError("");
+
+      const { data, error } = await supabase
+        .from("datasets")
+        .select(
+          "id, name, description, source_type, status, row_count, column_count",
+        )
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        setDatasets([]);
+        setDatasetsError(error.message);
+        setDatasetsLoading(false);
+        return;
+      }
+
+      setDatasets((data ?? []) as DatasetRow[]);
+      setDatasetsLoading(false);
+    }
+
+    void loadRole();
+    void loadDatasets();
   }, [session.user.id]);
 
   async function handleAsk(event: FormEvent<HTMLFormElement>) {
@@ -119,11 +155,34 @@ export default function WorkspacePage({ session }: Props) {
         <aside className="sidebar-card">
           <h2>Data Library</h2>
           <p className="muted">
-            ยังไม่ได้เชื่อม Dataset ใน Starter V1
+            ชุดข้อมูลที่ผู้ใช้บัญชีนี้มีสิทธิ์เห็น
           </p>
-          <div className="empty-state">
-            ขั้นถัดไปจะเชื่อมตาราง datasets และระบบเลือกชุดข้อมูล
-          </div>
+
+          {datasetsLoading ? (
+            <div className="empty-state">กำลังโหลด Dataset...</div>
+          ) : datasetsError ? (
+            <div className="error-box">{datasetsError}</div>
+          ) : datasets.length === 0 ? (
+            <div className="empty-state">ยังไม่มี Dataset ในระบบ</div>
+          ) : (
+            <div>
+              {datasets.map((dataset) => (
+                <div
+                  key={dataset.id}
+                  className="empty-state"
+                  style={{ marginBottom: 12 }}
+                >
+                  <strong>{dataset.name}</strong>
+                  <div className="muted">
+                    {dataset.description || "ไม่มีคำอธิบาย"}
+                  </div>
+                  <small>
+                    {dataset.source_type} · {dataset.status} · {dataset.row_count} rows · {dataset.column_count} columns
+                  </small>
+                </div>
+              ))}
+            </div>
+          )}
 
           {(role === "ADMIN" || role === "SUPER_ADMIN") && (
             <div className="admin-note">
