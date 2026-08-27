@@ -7,8 +7,8 @@ type Props = { session: Session };
 
 type ProcessResponse = {
   ok?: boolean;
-  row_count?: number;
-  column_count?: number;
+  accepted?: boolean;
+  status?: string;
   error?: string;
 };
 
@@ -63,7 +63,15 @@ export default function DataManagementPanel({ session }: Props) {
     setLoading(false);
   }
 
-  useEffect(() => { void loadDatasets(); }, []);
+  useEffect(() => {
+    void loadDatasets();
+  }, []);
+
+  useEffect(() => {
+    if (!datasets.some((dataset) => dataset.status === "PROCESSING")) return;
+    const timer = window.setInterval(() => void loadDatasets(), 4000);
+    return () => window.clearInterval(timer);
+  }, [datasets]);
 
   async function showDetails(dataset: DatasetRow) {
     setSelected(dataset);
@@ -90,7 +98,6 @@ export default function DataManagementPanel({ session }: Props) {
 
   async function processDataset(datasetId: string) {
     setBusyId(datasetId);
-    setMessage("");
     setErrorText("");
 
     const { data, error } = await supabase.functions.invoke<ProcessResponse>(
@@ -99,13 +106,13 @@ export default function DataManagementPanel({ session }: Props) {
     );
 
     if (error || !data?.ok) {
-      setErrorText(error?.message || data?.error || "ประมวลผล Dataset ไม่สำเร็จ");
+      setErrorText(error?.message || data?.error || "เริ่มประมวลผล Dataset ไม่สำเร็จ");
       setBusyId(null);
       await loadDatasets();
       return;
     }
 
-    setMessage(`ประมวลผลสำเร็จ ${data.row_count ?? 0} rows · ${data.column_count ?? 0} columns`);
+    setMessage("อัปโหลดสำเร็จ กำลังประมวลผล Dataset เบื้องหลัง");
     setBusyId(null);
     await loadDatasets();
   }
@@ -200,6 +207,8 @@ export default function DataManagementPanel({ session }: Props) {
     setDescription("");
     setFile(null);
     setBusyId(null);
+    setMessage("อัปโหลดไฟล์สำเร็จ กำลังส่งเข้าคิวประมวลผล");
+    await loadDatasets();
     await processDataset(dataset.id);
   }
 
@@ -301,11 +310,12 @@ export default function DataManagementPanel({ session }: Props) {
               <button className="secondary-button" type="button" onClick={() => void showDetails(dataset)}>
                 รายละเอียด
               </button>
-              {dataset.status !== "READY" && (
+              {dataset.status === "ERROR" && (
                 <button type="button" disabled={busyId !== null} onClick={() => void processDataset(dataset.id)}>
-                  {busyId === dataset.id ? "กำลังประมวลผล..." : "ประมวลผล"}
+                  {busyId === dataset.id ? "กำลังส่งงาน..." : "ลองประมวลผลใหม่"}
                 </button>
               )}
+              {dataset.status === "PROCESSING" && <small>กำลังประมวลผลเบื้องหลัง...</small>}
               <button className="danger-button" type="button" disabled={busyId !== null} onClick={() => void deleteDataset(dataset)}>
                 {busyId === dataset.id ? "กำลังดำเนินการ..." : "ลบ"}
               </button>
