@@ -1,24 +1,11 @@
 import { FormEvent, useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
+import type { DatasetRow, Role } from "../admin/types";
 
 type Props = {
   session: Session;
   onOpenAdmin: () => void;
-};
-
-type RoleRow = {
-  role: "USER" | "ADMIN" | "SUPER_ADMIN";
-};
-
-type DatasetRow = {
-  id: string;
-  name: string;
-  description: string | null;
-  source_type: string;
-  status: string;
-  row_count: number;
-  column_count: number;
 };
 
 type AiResponse = {
@@ -35,60 +22,35 @@ type AiResponse = {
 };
 
 export default function WorkspacePage({ session, onOpenAdmin }: Props) {
-  const [role, setRole] = useState<string>("กำลังโหลด...");
+  const [role, setRole] = useState<Role | "UNKNOWN" | "LOADING">("LOADING");
   const [datasets, setDatasets] = useState<DatasetRow[]>([]);
-  const [datasetsLoading, setDatasetsLoading] = useState(true);
-  const [datasetsError, setDatasetsError] = useState("");
+  const [selectedDatasetId, setSelectedDatasetId] = useState<string>("");
   const [message, setMessage] = useState("");
   const [answer, setAnswer] = useState("");
   const [errorText, setErrorText] = useState("");
   const [sending, setSending] = useState(false);
 
   useEffect(() => {
-    async function loadRole() {
-      const { data, error } = await supabase
-        .from("user_roles")
-        .select("role")
-        .eq("user_id", session.user.id)
-        .single<RoleRow>();
+    async function load() {
+      const [roleResult, datasetResult] = await Promise.all([
+        supabase.from("user_roles").select("role").eq("user_id", session.user.id).single<{ role: Role }>(),
+        supabase
+          .from("datasets")
+          .select("id,name,description,source_type,status,row_count,column_count,created_at")
+          .eq("status", "READY")
+          .order("created_at", { ascending: false }),
+      ]);
 
-      if (error || !data) {
-        setRole("UNKNOWN");
-        return;
-      }
-
-      setRole(data.role);
+      setRole(roleResult.error || !roleResult.data ? "UNKNOWN" : roleResult.data.role);
+      const list = (datasetResult.data ?? []) as DatasetRow[];
+      setDatasets(list);
+      if (list.length && !selectedDatasetId) setSelectedDatasetId(list[0].id);
     }
-
-    async function loadDatasets() {
-      setDatasetsLoading(true);
-      setDatasetsError("");
-
-      const { data, error } = await supabase
-        .from("datasets")
-        .select(
-          "id, name, description, source_type, status, row_count, column_count",
-        )
-        .order("created_at", { ascending: false });
-
-      if (error) {
-        setDatasets([]);
-        setDatasetsError(error.message);
-        setDatasetsLoading(false);
-        return;
-      }
-
-      setDatasets((data ?? []) as DatasetRow[]);
-      setDatasetsLoading(false);
-    }
-
-    void loadRole();
-    void loadDatasets();
+    void load();
   }, [session.user.id]);
 
   async function handleAsk(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-
     const cleanMessage = message.trim();
     if (!cleanMessage || sending) return;
 
@@ -96,32 +58,17 @@ export default function WorkspacePage({ session, onOpenAdmin }: Props) {
     setErrorText("");
     setAnswer("");
 
-    const { data, error } = await supabase.functions.invoke<AiResponse>(
-      "ai-chat",
-      {
-        body: {
-          message: cleanMessage,
-        },
+    const { data, error } = await supabase.functions.invoke<AiResponse>("ai-chat", {
+      body: {
+        message: cleanMessage,
+        dataset_id: selectedDatasetId || null,
       },
-    );
+    });
 
-    if (error) {
-      setErrorText(error.message);
-      setSending(false);
-      return;
-    }
+    if (error) setErrorText(error.message);
+    else if (!data?.ok) setErrorText(data?.detail || data?.error || "AI request failed");
+    else setAnswer(data.answer || "AI ไม่ได้ส่งข้อความกลับมา");
 
-    if (!data?.ok) {
-      setErrorText(
-        data?.detail ||
-          data?.error ||
-          "AI request failed",
-      );
-      setSending(false);
-      return;
-    }
-
-    setAnswer(data.answer || "AI ไม่ได้ส่งข้อความกลับมา");
     setSending(false);
   }
 
@@ -130,6 +77,7 @@ export default function WorkspacePage({ session, onOpenAdmin }: Props) {
   }
 
   const isAdmin = role === "ADMIN" || role === "SUPER_ADMIN";
+  const selected = datasets.find((item) => item.id === selectedDatasetId);
 
   return (
     <main className="app-shell">
@@ -144,66 +92,39 @@ export default function WorkspacePage({ session, onOpenAdmin }: Props) {
             <div>{session.user.email}</div>
             <small>Role: {role}</small>
           </div>
-
-          {isAdmin && (
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={onOpenAdmin}
-            >
-              Admin Console
-            </button>
-          )}
-
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={handleSignOut}
-          >
-            ออกจากระบบ
-          </button>
+          {isAdmin && <button className="secondary-button" type="button" onClick={onOpenAdmin}>Admin Console</button>}
+          <button className="secondary-button" type="button" onClick={handleSignOut}>ออกจากระบบ</button>
         </div>
       </header>
 
       <section className="workspace-grid">
         <aside className="sidebar-card">
           <h2>Data Library</h2>
-          <p className="muted">
-            ชุดข้อมูลที่ผู้ใช้บัญชีนี้มีสิทธิ์เห็น
-          </p>
+          <p className="muted">เลือก Dataset ที่จะใช้เป็นบริบทของ AI</p>
 
-          {datasetsLoading ? (
-            <div className="empty-state">กำลังโหลด Dataset...</div>
-          ) : datasetsError ? (
-            <div className="error-box">{datasetsError}</div>
-          ) : datasets.length === 0 ? (
-            <div className="empty-state">ยังไม่มี Dataset ในระบบ</div>
+          {datasets.length === 0 ? (
+            <div className="empty-state">ยังไม่มี Dataset สถานะ READY</div>
           ) : (
-            <div>
+            <div className="dataset-select-list">
               {datasets.map((dataset) => (
-                <div
+                <button
+                  type="button"
                   key={dataset.id}
-                  className="empty-state"
-                  style={{ marginBottom: 12 }}
+                  className={`dataset-select-item ${selectedDatasetId === dataset.id ? "active" : ""}`}
+                  onClick={() => setSelectedDatasetId(dataset.id)}
                 >
                   <strong>{dataset.name}</strong>
-                  <div className="muted">
-                    {dataset.description || "ไม่มีคำอธิบาย"}
-                  </div>
-                  <small>
-                    {dataset.source_type} · {dataset.status} · {dataset.row_count} rows · {dataset.column_count} columns
-                  </small>
-                </div>
+                  <span>{dataset.row_count} rows · {dataset.column_count} columns</span>
+                </button>
               ))}
             </div>
           )}
 
-          {isAdmin && (
+          {selected && (
             <div className="admin-note">
-              <strong>Administrator</strong>
-              <span>
-                จัดการข้อมูล การเชื่อมต่อ Agent และผู้ใช้ได้จาก Admin Console
-              </span>
+              <strong>Selected Dataset</strong>
+              <span>{selected.name}</span>
+              <small>{selected.description || "ไม่มีคำอธิบาย"}</small>
             </div>
           )}
         </aside>
@@ -213,35 +134,25 @@ export default function WorkspacePage({ session, onOpenAdmin }: Props) {
             <div>
               <h2>คุยกับ AI Data Agent</h2>
               <p className="muted">
-                คำขอจะถูกส่งผ่าน Supabase Edge Function:
-                ai-chat
+                {selected ? `กำลังใช้ Dataset: ${selected.name}` : "ยังไม่ได้เลือก Dataset"}
               </p>
             </div>
           </div>
 
           <div className="answer-area">
-            {answer ? (
-              <div className="assistant-answer">
-                {answer}
-              </div>
-            ) : (
-              <div className="empty-answer">
-                พิมพ์คำถามเพื่อทดสอบว่า User Session
-                สามารถเรียก AI ได้จริง
-              </div>
+            {answer ? <div className="assistant-answer">{answer}</div> : (
+              <div className="empty-answer">เลือก Dataset แล้วถามคำถามเกี่ยวกับข้อมูลได้</div>
             )}
           </div>
 
-          {errorText && (
-            <div className="error-box">{errorText}</div>
-          )}
+          {errorText && <div className="error-box">{errorText}</div>}
 
           <form onSubmit={handleAsk} className="chat-form">
             <textarea
               rows={4}
               value={message}
-              onChange={(event) => setMessage(event.target.value)}
-              placeholder="เช่น อธิบายหน้าที่ของ AI Data Agent แบบสั้น ๆ"
+              onChange={(e) => setMessage(e.target.value)}
+              placeholder="เช่น สรุปข้อมูลนี้ และชี้ประเด็นที่ควรตรวจสอบ"
             />
             <button type="submit" disabled={sending}>
               {sending ? "กำลังวิเคราะห์..." : "ส่งให้ AI"}
