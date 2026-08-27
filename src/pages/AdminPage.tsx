@@ -16,13 +16,18 @@ type Props = {
 
 type Tab = "data" | "connections" | "agent" | "skills" | "users" | "audit";
 
-const NAV: Array<{ id: Tab; title: string; description: string }> = [
-  { id: "data", title: "Data Management", description: "Upload / Process / Delete" },
-  { id: "connections", title: "Connections", description: "API / Database / Sheet" },
-  { id: "agent", title: "Agent Configuration", description: "Model / System Prompt" },
-  { id: "skills", title: "Skills", description: "Add / Edit / Enable / Delete" },
-  { id: "users", title: "Users & Access", description: "Role / Suspend / Delete" },
-  { id: "audit", title: "Audit Logs", description: "Admin activity" },
+const NAV: Array<{
+  id: Tab;
+  title: string;
+  thaiTitle: string;
+  description: string;
+}> = [
+  { id: "data", title: "Data Management", thaiTitle: "จัดการข้อมูล", description: "Upload · Process · Delete" },
+  { id: "connections", title: "Connections", thaiTitle: "เชื่อมต่อแหล่งข้อมูล", description: "API · Database · Sheet" },
+  { id: "agent", title: "Agent Configuration", thaiTitle: "ตั้งค่า AI Agent", description: "Model · System Prompt" },
+  { id: "skills", title: "Skills", thaiTitle: "ความสามารถของ Agent", description: "Import · Add · Edit · Delete" },
+  { id: "users", title: "Users & Access", thaiTitle: "ผู้ใช้และสิทธิ์", description: "Role · Suspend · Delete" },
+  { id: "audit", title: "Audit Logs", thaiTitle: "ประวัติการใช้งาน", description: "Admin activity" },
 ];
 
 export default function AdminPage({ session, onBack }: Props) {
@@ -44,9 +49,14 @@ export default function AdminPage({ session, onBack }: Props) {
 
   const isAdmin = role === "ADMIN" || role === "SUPER_ADMIN";
   const isSuperAdmin = role === "SUPER_ADMIN";
+  const activeNav = NAV.find((item) => item.id === tab) ?? NAV[0];
 
   if (role === "LOADING") {
-    return <main className="center-screen"><div className="status-card">กำลังตรวจสอบสิทธิ์...</div></main>;
+    return (
+      <main className="center-screen">
+        <div className="status-card">กำลังตรวจสอบสิทธิ์...</div>
+      </main>
+    );
   }
 
   if (!isAdmin) {
@@ -62,44 +72,77 @@ export default function AdminPage({ session, onBack }: Props) {
 
   return (
     <main className="app-shell">
-      <header className="app-header">
+      <header className="app-header admin-header">
         <div>
-          <div className="eyebrow">AI DATA WORKSPACE</div>
+          <div className="eyebrow">AI DATA WORKSPACE · ADMINISTRATION</div>
           <h1>Admin Console</h1>
-          <p className="muted">ระบบหลังบ้านสำหรับ Data, Connection, Agent และ Access Control</p>
+          <p className="muted admin-header-copy">
+            จัดการข้อมูล การเชื่อมต่อ Agent Skills ผู้ใช้งาน และประวัติการดำเนินงานจากจุดเดียว
+          </p>
         </div>
-        <div className="user-area">
-          <div>
+
+        <div className="user-area admin-user-area">
+          <div className="admin-user-badge">
             <div>{session.user.email}</div>
-            <small>Role: {role}</small>
+            <small>{role}</small>
           </div>
-          <button className="secondary-button" type="button" onClick={onBack}>กลับ Workspace</button>
+          <button className="secondary-button" type="button" onClick={onBack}>
+            กลับ Workspace
+          </button>
         </div>
       </header>
 
-      <section className="admin-layout">
-        <aside className="admin-nav">
-          <h2>Administration</h2>
-          {NAV.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={`admin-nav-item ${tab === item.id ? "active" : ""}`}
-              onClick={() => setTab(item.id)}
-            >
-              <strong>{item.title}</strong>
-              <span>{item.description}</span>
-            </button>
-          ))}
+      <section className="workspace-grid admin-workspace-grid">
+        <aside className="sidebar-card admin-sidebar">
+          <div className="admin-sidebar-heading">
+            <div>
+              <div className="eyebrow">ADMIN MENU</div>
+              <h2>Administration</h2>
+            </div>
+            <span className="role-pill">{role}</span>
+          </div>
+
+          <nav className="admin-menu-list" aria-label="Admin menu">
+            {NAV.map((item, index) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`admin-menu-card ${tab === item.id ? "active" : ""}`}
+                onClick={() => setTab(item.id)}
+              >
+                <span className="admin-menu-index">{String(index + 1).padStart(2, "0")}</span>
+                <span className="admin-menu-copy">
+                  <strong>{item.thaiTitle}</strong>
+                  <span>{item.title}</span>
+                  <small>{item.description}</small>
+                </span>
+                <span className="admin-menu-arrow" aria-hidden="true">›</span>
+              </button>
+            ))}
+          </nav>
         </aside>
 
-        <section className="admin-content">
-          {tab === "data" && <DataManagementPanel session={session} />}
-          {tab === "connections" && <ConnectionsPanel />}
-          {tab === "agent" && <AgentConfigPanel session={session} canEdit={isSuperAdmin} />}
-          {tab === "skills" && <SkillsPanel session={session} canEdit={isSuperAdmin} />}
-          {tab === "users" && (isSuperAdmin ? <UsersPanel /> : <div className="warning-box">Users & Access ใช้ได้เฉพาะ SUPER_ADMIN</div>)}
-          {tab === "audit" && <AuditPanel />}
+        <section className="chat-card admin-main-card">
+          <div className="admin-current-section">
+            <div>
+              <div className="eyebrow">CURRENT SECTION</div>
+              <strong>{activeNav.thaiTitle}</strong>
+              <span>{activeNav.title}</span>
+            </div>
+          </div>
+
+          <div className="answer-area admin-panel-area">
+            {tab === "data" && <DataManagementPanel session={session} />}
+            {tab === "connections" && <ConnectionsPanel />}
+            {tab === "agent" && <AgentConfigPanel session={session} canEdit={isSuperAdmin} />}
+            {tab === "skills" && <SkillsPanel session={session} canEdit={isSuperAdmin} />}
+            {tab === "users" && (
+              isSuperAdmin
+                ? <UsersPanel />
+                : <div className="warning-box">Users & Access ใช้ได้เฉพาะ SUPER_ADMIN</div>
+            )}
+            {tab === "audit" && <AuditPanel />}
+          </div>
         </section>
       </section>
     </main>
