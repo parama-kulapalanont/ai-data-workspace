@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabase";
 import LoginPage from "./pages/LoginPage";
-import WorkspacePage from "./pages/WorkspacePage";
+import WorkspacePageV2 from "./pages/WorkspacePageV2";
 import AdminPage from "./pages/AdminPage";
 
 type AppView = "workspace" | "admin";
@@ -69,7 +69,7 @@ export default function App() {
   }
 
   return (
-    <WorkspacePage
+    <WorkspacePageV2
       session={session}
       onOpenAdmin={() => {
         window.location.hash = "admin";

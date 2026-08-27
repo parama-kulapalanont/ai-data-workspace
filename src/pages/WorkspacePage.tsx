@@ -1,16 +1,10 @@
-import {
-  FormEvent,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-
 import { supabase } from "../lib/supabase";
 import type { DatasetRow, Role } from "../admin/types";
+import "./WorkspacePage.css";
 
 type Props = {
   session: Session;
@@ -22,15 +16,10 @@ type AiResponse = {
   answer?: string;
   error?: string;
   detail?: string;
-  agent?: {
-    name?: string;
-    model?: string;
-    prompt_version?: number;
-    config_source?: string;
-  };
 };
 
 type ChatRole = "user" | "assistant";
+type ThemeMode = "light" | "dark";
 
 type ChatMessage = {
   id: string;
@@ -49,28 +38,31 @@ type ChatConversation = {
 };
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const THEME_KEY = "ai-data-workspace-theme";
+
+const RESPONSE_POLICY = [
+  "รูปแบบการตอบที่ต้องปฏิบัติ:",
+  "- เริ่มด้วยผลลัพธ์ คำตอบ หรือตัวเลขสำคัญทันที",
+  "- ตอบให้กระชับ ใช้เฉพาะข้อมูลที่จำเป็นต่อคำถาม",
+  "- ห้ามเกริ่นหลักการทั่วไป ห้ามสรุปวิธีคิด และห้ามอธิบายพื้นฐานที่ผู้ใช้ไม่ได้ถาม",
+  "- หากข้อมูลไม่พอ ให้ถามกลับสั้น ๆ เฉพาะข้อมูลที่จำเป็นก่อนตอบ",
+  "- หากเป็นการวิเคราะห์ข้อมูล ให้แสดงตัวเลข ตาราง หรือข้อค้นพบก่อนคำอธิบาย",
+  "- ใช้ Markdown เท่าที่ช่วยให้อ่านผลลัพธ์ได้เร็ว เช่น ตัวหนา รายการ และตาราง",
+].join("\n");
 
 function createId() {
-  if (typeof crypto !== "undefined" && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function makeConversationTitle(message: string) {
   const clean = message.replace(/\s+/g, " ").trim();
-
-  if (clean.length <= 42) return clean;
-
-  return `${clean.slice(0, 42)}…`;
+  return clean.length <= 38 ? clean : `${clean.slice(0, 38)}…`;
 }
 
-function formatConversationTime(value: string) {
+function formatTime(value: string) {
   const date = new Date(value);
-
   if (Number.isNaN(date.getTime())) return "";
-
   return date.toLocaleString("th-TH", {
     day: "2-digit",
     month: "short",
@@ -79,31 +71,33 @@ function formatConversationTime(value: string) {
   });
 }
 
-export default function WorkspacePage({
-  session,
-  onOpenAdmin,
-}: Props) {
-  const [role, setRole] = useState<
-    Role | "UNKNOWN" | "LOADING"
-  >("LOADING");
+function buildAiMessage(question: string, history: ChatMessage[]) {
+  const historyText = history
+    .map((item) => `${item.role === "user" ? "ผู้ใช้" : "AI"}: ${item.content}`)
+    .join("\n\n");
 
+  return [
+    RESPONSE_POLICY,
+    historyText ? `\nประวัติการสนทนาเดิม:\n${historyText}` : "",
+    `\nคำถามล่าสุด:\n${question}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export default function WorkspacePage({ session, onOpenAdmin }: Props) {
+  const [role, setRole] = useState<Role | "UNKNOWN" | "LOADING">("LOADING");
   const [datasets, setDatasets] = useState<DatasetRow[]>([]);
-  const [selectedDatasetId, setSelectedDatasetId] =
-    useState<string>("");
-
+  const [selectedDatasetId, setSelectedDatasetId] = useState("");
   const [message, setMessage] = useState("");
-
-  const [conversations, setConversations] = useState<
-    ChatConversation[]
-  >([]);
-
-  const [activeConversationId, setActiveConversationId] =
-    useState<string>("");
-
+  const [conversations, setConversations] = useState<ChatConversation[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState("");
   const [errorText, setErrorText] = useState("");
   const [sending, setSending] = useState(false);
-
-  const answerAreaRef = useRef<HTMLDivElement | null>(null);
+  const [theme, setTheme] = useState<ThemeMode>(() =>
+    localStorage.getItem(THEME_KEY) === "dark" ? "dark" : "light",
+  );
+  const threadRef = useRef<HTMLDivElement | null>(null);
 
   const storageKey = useMemo(
     () => `ai-data-workspace-chat:${session.user.id}`,
@@ -111,34 +105,24 @@ export default function WorkspacePage({
   );
 
   const activeConversation = useMemo(
-    () =>
-      conversations.find(
-        (item) => item.id === activeConversationId,
-      ) ?? null,
+    () => conversations.find((item) => item.id === activeConversationId) ?? null,
     [conversations, activeConversationId],
   );
 
-  const selected = datasets.find(
-    (item) => item.id === selectedDatasetId,
-  );
-
-  const isAdmin =
-    role === "ADMIN" || role === "SUPER_ADMIN";
+  const selected = datasets.find((item) => item.id === selectedDatasetId);
+  const isAdmin = role === "ADMIN" || role === "SUPER_ADMIN";
 
   function saveConversations(next: ChatConversation[]) {
     const sorted = [...next].sort(
-      (a, b) =>
-        new Date(b.updatedAt).getTime() -
-        new Date(a.updatedAt).getTime(),
+      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
     );
-
     setConversations(sorted);
-
-    localStorage.setItem(
-      storageKey,
-      JSON.stringify(sorted),
-    );
+    localStorage.setItem(storageKey, JSON.stringify(sorted));
   }
+
+  useEffect(() => {
+    localStorage.setItem(THEME_KEY, theme);
+  }, [theme]);
 
   useEffect(() => {
     async function load() {
@@ -148,34 +132,17 @@ export default function WorkspacePage({
           .select("role")
           .eq("user_id", session.user.id)
           .single<{ role: Role }>(),
-
         supabase
           .from("datasets")
-          .select(
-            "id,name,description,source_type,status,row_count,column_count,created_at",
-          )
+          .select("id,name,description,source_type,status,row_count,column_count,created_at")
           .eq("status", "READY")
-          .order("created_at", {
-            ascending: false,
-          }),
+          .order("created_at", { ascending: false }),
       ]);
 
-      setRole(
-        roleResult.error || !roleResult.data
-          ? "UNKNOWN"
-          : roleResult.data.role,
-      );
-
-      const list =
-        (datasetResult.data ?? []) as DatasetRow[];
-
+      setRole(roleResult.error || !roleResult.data ? "UNKNOWN" : roleResult.data.role);
+      const list = (datasetResult.data ?? []) as DatasetRow[];
       setDatasets(list);
-
-      if (list.length) {
-        setSelectedDatasetId((current) =>
-          current || list[0].id,
-        );
-      }
+      if (list.length) setSelectedDatasetId((current) => current || list[0].id);
     }
 
     void load();
@@ -184,38 +151,18 @@ export default function WorkspacePage({
   useEffect(() => {
     try {
       const saved = localStorage.getItem(storageKey);
-
-      if (!saved) {
-        setConversations([]);
-        return;
-      }
-
-      const parsed =
-        JSON.parse(saved) as ChatConversation[];
-
+      if (!saved) return;
+      const parsed = JSON.parse(saved) as ChatConversation[];
       const now = Date.now();
-
-      const valid = parsed.filter((conversation) => {
-        const updated =
-          new Date(conversation.updatedAt).getTime();
-
-        if (Number.isNaN(updated)) return false;
-
-        return now - updated < ONE_DAY_MS;
+      const valid = parsed.filter((item) => {
+        const updated = new Date(item.updatedAt).getTime();
+        return !Number.isNaN(updated) && now - updated < ONE_DAY_MS;
       });
-
       const sorted = [...valid].sort(
-        (a, b) =>
-          new Date(b.updatedAt).getTime() -
-          new Date(a.updatedAt).getTime(),
+        (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
       );
-
       setConversations(sorted);
-
-      localStorage.setItem(
-        storageKey,
-        JSON.stringify(sorted),
-      );
+      localStorage.setItem(storageKey, JSON.stringify(sorted));
     } catch {
       localStorage.removeItem(storageKey);
       setConversations([]);
@@ -223,28 +170,16 @@ export default function WorkspacePage({
   }, [storageKey]);
 
   useEffect(() => {
-    if (!activeConversation) return;
-
-    if (activeConversation.datasetId) {
-      setSelectedDatasetId(
-        activeConversation.datasetId,
-      );
+    if (activeConversation?.datasetId) {
+      setSelectedDatasetId(activeConversation.datasetId);
     }
-  }, [activeConversationId]);
+  }, [activeConversationId, activeConversation]);
 
   useEffect(() => {
-    const element = answerAreaRef.current;
-
+    const element = threadRef.current;
     if (!element) return;
-
-    element.scrollTo({
-      top: element.scrollHeight,
-      behavior: "smooth",
-    });
-  }, [
-    activeConversation?.messages.length,
-    sending,
-  ]);
+    element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
+  }, [activeConversation?.messages.length, sending]);
 
   function handleNewChat() {
     setActiveConversationId("");
@@ -252,89 +187,28 @@ export default function WorkspacePage({
     setErrorText("");
   }
 
-  function handleOpenConversation(
-    conversation: ChatConversation,
-  ) {
+  function handleOpenConversation(conversation: ChatConversation) {
     setActiveConversationId(conversation.id);
-
-    if (conversation.datasetId) {
-      setSelectedDatasetId(
-        conversation.datasetId,
-      );
-    }
-
+    if (conversation.datasetId) setSelectedDatasetId(conversation.datasetId);
     setErrorText("");
   }
 
-  function handleDatasetSelect(datasetId: string) {
-    setSelectedDatasetId(datasetId);
-
-    if (!activeConversationId) return;
-
-    const now = new Date().toISOString();
-
-    const next = conversations.map((conversation) =>
-      conversation.id === activeConversationId
-        ? {
-            ...conversation,
-            datasetId,
-            updatedAt: now,
-          }
-        : conversation,
-    );
-
-    saveConversations(next);
+  function handleDeleteConversation(id: string) {
+    if (!window.confirm("ลบประวัติการสนทนานี้หรือไม่")) return;
+    saveConversations(conversations.filter((item) => item.id !== id));
+    if (activeConversationId === id) handleNewChat();
   }
 
-  function handleDeleteConversation(
-    conversationId: string,
-  ) {
-    const confirmed = window.confirm(
-      "ต้องการลบประวัติการสนทนานี้หรือไม่",
-    );
-
-    if (!confirmed) return;
-
-    const next = conversations.filter(
-      (conversation) =>
-        conversation.id !== conversationId,
-    );
-
-    saveConversations(next);
-
-    if (
-      activeConversationId === conversationId
-    ) {
-      setActiveConversationId("");
-      setMessage("");
-      setErrorText("");
-    }
-  }
-
-  function handleDeleteAllConversations() {
-    if (!conversations.length) return;
-
-    const confirmed = window.confirm(
-      "ต้องการลบประวัติการสนทนาทั้งหมดหรือไม่",
-    );
-
-    if (!confirmed) return;
-
+  function handleDeleteAll() {
+    if (!conversations.length || !window.confirm("ลบประวัติการสนทนาทั้งหมดหรือไม่")) return;
     localStorage.removeItem(storageKey);
-
     setConversations([]);
-    setActiveConversationId("");
-    setMessage("");
-    setErrorText("");
+    handleNewChat();
   }
 
-  async function handleAsk(
-    event: FormEvent<HTMLFormElement>,
-  ) {
+  async function handleAsk(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-
     const cleanMessage = message.trim();
-
     if (!cleanMessage || sending) return;
 
     setSending(true);
@@ -342,7 +216,6 @@ export default function WorkspacePage({
     setMessage("");
 
     const now = new Date().toISOString();
-
     const userMessage: ChatMessage = {
       id: createId(),
       role: "user",
@@ -350,97 +223,39 @@ export default function WorkspacePage({
       createdAt: now,
     };
 
-    let conversation: ChatConversation;
+    const previousMessages = activeConversation?.messages ?? [];
+    const conversation: ChatConversation = activeConversation
+      ? {
+          ...activeConversation,
+          datasetId: selectedDatasetId,
+          updatedAt: now,
+          messages: [...previousMessages, userMessage],
+        }
+      : {
+          id: createId(),
+          title: makeConversationTitle(cleanMessage),
+          datasetId: selectedDatasetId,
+          createdAt: now,
+          updatedAt: now,
+          messages: [userMessage],
+        };
 
-    if (activeConversation) {
-      conversation = {
-        ...activeConversation,
-        datasetId: selectedDatasetId,
-        updatedAt: now,
-        messages: [
-          ...activeConversation.messages,
-          userMessage,
-        ],
-      };
-    } else {
-      conversation = {
-        id: createId(),
-        title: makeConversationTitle(
-          cleanMessage,
-        ),
-        datasetId: selectedDatasetId,
-        createdAt: now,
-        updatedAt: now,
-        messages: [userMessage],
-      };
-    }
+    const withUser = activeConversation
+      ? conversations.map((item) => (item.id === conversation.id ? conversation : item))
+      : [conversation, ...conversations];
 
-    const conversationsWithUser =
-      activeConversation
-        ? conversations.map((item) =>
-            item.id === conversation.id
-              ? conversation
-              : item,
-          )
-        : [conversation, ...conversations];
+    saveConversations(withUser);
+    setActiveConversationId(conversation.id);
 
-    saveConversations(
-      conversationsWithUser,
-    );
+    const { data, error } = await supabase.functions.invoke<AiResponse>("ai-chat", {
+      body: {
+        message: buildAiMessage(cleanMessage, previousMessages),
+        dataset_id: selectedDatasetId || null,
+      },
+    });
 
-    setActiveConversationId(
-      conversation.id,
-    );
-
-    const historyText =
-      conversation.messages
-        .map((item) => {
-          const speaker =
-            item.role === "user"
-              ? "ผู้ใช้"
-              : "AI";
-
-          return `${speaker}:\n${item.content}`;
-        })
-        .join("\n\n");
-
-    const messageForAi =
-      conversation.messages.length > 1
-        ? [
-            "ต่อไปนี้คือประวัติการสนทนาเดิมในแชทเดียวกัน",
-            "ให้ใช้บริบทจากข้อความก่อนหน้าเมื่อผู้ใช้ถามต่อเนื่อง",
-            "",
-            historyText,
-            "",
-            "โปรดตอบคำถามล่าสุดของผู้ใช้",
-          ].join("\n")
-        : cleanMessage;
-
-    const { data, error } =
-      await supabase.functions.invoke<AiResponse>(
-        "ai-chat",
-        {
-          body: {
-            message: messageForAi,
-            dataset_id:
-              selectedDatasetId || null,
-          },
-        },
-      );
-
-    if (error) {
-      setErrorText(error.message);
-      setSending(false);
-      return;
-    }
-
-    if (!data?.ok) {
-      setErrorText(
-        data?.detail ||
-          data?.error ||
-          "AI request failed",
-      );
-
+    if (error || !data?.ok) {
+      setErrorText(error?.message || data?.detail || data?.error || "AI request failed");
       setSending(false);
       return;
     }
@@ -448,333 +263,178 @@ export default function WorkspacePage({
     const assistantMessage: ChatMessage = {
       id: createId(),
       role: "assistant",
-      content:
-        data.answer ||
-        "AI ไม่ได้ส่งข้อความกลับมา",
+      content: data.answer || "AI ไม่ได้ส่งข้อความกลับมา",
       createdAt: new Date().toISOString(),
     };
 
-    const completedConversation: ChatConversation =
-      {
-        ...conversation,
-        updatedAt:
-          assistantMessage.createdAt,
-        messages: [
-          ...conversation.messages,
-          assistantMessage,
-        ],
-      };
+    const completed: ChatConversation = {
+      ...conversation,
+      updatedAt: assistantMessage.createdAt,
+      messages: [...conversation.messages, assistantMessage],
+    };
 
-    const completedList =
-      conversationsWithUser.map((item) =>
-        item.id === completedConversation.id
-          ? completedConversation
-          : item,
-      );
-
-    saveConversations(completedList);
-
+    saveConversations(withUser.map((item) => (item.id === completed.id ? completed : item)));
     setSending(false);
   }
 
   async function handleSignOut() {
     localStorage.removeItem(storageKey);
-
     setConversations([]);
     setActiveConversationId("");
-
     await supabase.auth.signOut();
   }
 
   return (
-    <main className="app-shell">
-      <header className="app-header">
-        <div>
-          <div className="eyebrow">
-            AI DATA WORKSPACE
-          </div>
-
+    <main className={`workspace-v2 theme-${theme}`}>
+      <header className="workspace-v2-header">
+        <div className="workspace-v2-title">
+          <span>AI DATA WORKSPACE</span>
           <h1>AI Data Agent</h1>
         </div>
 
-        <div className="user-area">
-          <div>
-            <div>{session.user.email}</div>
-            <small>Role: {role}</small>
-          </div>
-
-          {isAdmin && (
+        <div className="workspace-v2-actions">
+          <div className="theme-switch" aria-label="เลือกธีม">
             <button
-              className="secondary-button"
               type="button"
-              onClick={onOpenAdmin}
+              className={theme === "light" ? "active" : ""}
+              onClick={() => setTheme("light")}
             >
+              ขาว–ชมพู
+            </button>
+            <button
+              type="button"
+              className={theme === "dark" ? "active" : ""}
+              onClick={() => setTheme("dark")}
+            >
+              ดำ–ชมพู
+            </button>
+          </div>
+          <div className="workspace-user">
+            <strong>{session.user.email}</strong>
+            <span>{role}</span>
+          </div>
+          {isAdmin && (
+            <button className="workspace-outline-button" type="button" onClick={onOpenAdmin}>
               Admin Console
             </button>
           )}
-
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={handleSignOut}
-          >
+          <button className="workspace-outline-button" type="button" onClick={handleSignOut}>
             ออกจากระบบ
           </button>
         </div>
       </header>
 
-      <section className="workspace-grid">
-        <aside className="sidebar-card">
-          <section>
-            <div className="chat-sidebar-heading">
-              <div>
-                <h2>ประวัติแชท</h2>
-                <p className="muted">
-                  ประวัติจะถูกลบเมื่อออกจากระบบ
-                  หรือเมื่อไม่มีการใช้งานเกิน 24
-                  ชั่วโมง
-                </p>
-              </div>
+      <section className="workspace-v2-grid">
+        <aside className="workspace-sidebar">
+          <section className="sidebar-section history-section">
+            <div className="section-title-row">
+              <h2>ประวัติแชท</h2>
+              {conversations.length > 0 && (
+                <button className="text-danger-button" type="button" onClick={handleDeleteAll}>
+                  ลบทั้งหมด
+                </button>
+              )}
             </div>
-
-            <button
-              type="button"
-              className="new-chat-button"
-              onClick={handleNewChat}
-            >
+            <button className="new-chat-button-v2" type="button" onClick={handleNewChat}>
               + แชทใหม่
             </button>
-
-            {conversations.length > 0 && (
-              <button
-                type="button"
-                className="clear-history-button"
-                onClick={
-                  handleDeleteAllConversations
-                }
-              >
-                ลบประวัติทั้งหมด
-              </button>
-            )}
-
-            <div className="conversation-list">
+            <div className="conversation-list-v2">
               {conversations.length === 0 ? (
-                <div className="conversation-empty">
-                  ยังไม่มีประวัติการสนทนา
-                </div>
+                <div className="compact-empty">ยังไม่มีประวัติ</div>
               ) : (
-                conversations.map(
-                  (conversation) => (
-                    <div
-                      key={conversation.id}
-                      className={`conversation-item ${
-                        activeConversationId ===
-                        conversation.id
-                          ? "active"
-                          : ""
-                      }`}
+                conversations.map((conversation) => (
+                  <div
+                    key={conversation.id}
+                    className={`conversation-row-v2 ${activeConversationId === conversation.id ? "active" : ""}`}
+                  >
+                    <button type="button" onClick={() => handleOpenConversation(conversation)}>
+                      <strong>{conversation.title}</strong>
+                      <span>{formatTime(conversation.updatedAt)}</span>
+                    </button>
+                    <button
+                      className="delete-chat-button"
+                      type="button"
+                      title="ลบแชท"
+                      onClick={() => handleDeleteConversation(conversation.id)}
                     >
-                      <button
-                        type="button"
-                        className="conversation-open-button"
-                        onClick={() =>
-                          handleOpenConversation(
-                            conversation,
-                          )
-                        }
-                      >
-                        <strong>
-                          {conversation.title}
-                        </strong>
-
-                        <span>
-                          {formatConversationTime(
-                            conversation.updatedAt,
-                          )}
-                        </span>
-                      </button>
-
-                      <button
-                        type="button"
-                        className="conversation-delete-button"
-                        title="ลบประวัตินี้"
-                        onClick={() =>
-                          handleDeleteConversation(
-                            conversation.id,
-                          )
-                        }
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ),
-                )
+                      ×
+                    </button>
+                  </div>
+                ))
               )}
             </div>
           </section>
 
-          <section className="dataset-library-section">
+          <section className="sidebar-section dataset-section-v2">
             <h2>Data Library</h2>
-
-            <p className="muted">
-              เลือก Dataset
-              ที่จะใช้เป็นบริบทของ AI
-            </p>
-
-            {datasets.length === 0 ? (
-              <div className="empty-state">
-                ยังไม่มี Dataset สถานะ READY
-              </div>
-            ) : (
-              <div className="dataset-select-list">
-                {datasets.map((dataset) => (
+            <div className="dataset-list-v2">
+              {datasets.length === 0 ? (
+                <div className="compact-empty">ยังไม่มี Dataset สถานะ READY</div>
+              ) : (
+                datasets.map((dataset) => (
                   <button
                     type="button"
                     key={dataset.id}
-                    className={`dataset-select-item ${
-                      selectedDatasetId ===
-                      dataset.id
-                        ? "active"
-                        : ""
-                    }`}
-                    onClick={() =>
-                      handleDatasetSelect(
-                        dataset.id,
-                      )
-                    }
+                    className={selectedDatasetId === dataset.id ? "active" : ""}
+                    onClick={() => setSelectedDatasetId(dataset.id)}
                   >
-                    <strong>
-                      {dataset.name}
-                    </strong>
-
-                    <span>
-                      {dataset.row_count} rows ·{" "}
-                      {dataset.column_count}{" "}
-                      columns
-                    </span>
+                    <strong>{dataset.name}</strong>
+                    <span>{dataset.row_count} rows · {dataset.column_count} columns</span>
                   </button>
-                ))}
-              </div>
-            )}
-
-            {selected && (
-              <div className="admin-note">
-                <strong>
-                  Selected Dataset
-                </strong>
-
-                <span>{selected.name}</span>
-
-                <small>
-                  {selected.description ||
-                    "ไม่มีคำอธิบาย"}
-                </small>
-              </div>
-            )}
+                ))
+              )}
+            </div>
           </section>
         </aside>
 
-        <section className="chat-card">
-          <div className="chat-header">
+        <section className="workspace-chat-panel">
+          <div className="chat-panel-header-v2">
             <div>
-              <h2>
-                {activeConversation
-                  ? activeConversation.title
-                  : "คุยกับ AI Data Agent"}
-              </h2>
-
-              <p className="muted">
-                {selected
-                  ? `กำลังใช้ Dataset: ${selected.name}`
-                  : "ยังไม่ได้เลือก Dataset"}
-              </p>
+              <h2>{activeConversation?.title || "คุยกับ AI Data Agent"}</h2>
+              <span>{selected ? `Dataset: ${selected.name}` : "ยังไม่ได้เลือก Dataset"}</span>
             </div>
           </div>
 
-          <div
-            className="answer-area chat-thread"
-            ref={answerAreaRef}
-          >
-            {!activeConversation ||
-            activeConversation.messages
-              .length === 0 ? (
-              <div className="empty-answer">
-                เลือก Dataset
-                แล้วถามคำถามเกี่ยวกับข้อมูลได้
-              </div>
+          <div className="chat-thread-v2" ref={threadRef}>
+            {!activeConversation?.messages.length ? (
+              <div className="chat-start-state">ถามคำถามเกี่ยวกับ Dataset ที่เลือกได้เลย</div>
             ) : (
-              activeConversation.messages.map(
-                (chatMessage) => (
-                  <div
-                    key={chatMessage.id}
-                    className={`chat-message-row ${chatMessage.role}`}
-                  >
-                    <div
-                      className={`chat-message-bubble ${chatMessage.role}`}
-                    >
-                      {chatMessage.role ===
-                      "assistant" ? (
-                        <div className="assistant-answer markdown-answer">
-                          <ReactMarkdown
-                            remarkPlugins={[
-                              remarkGfm,
-                            ]}
-                          >
-                            {
-                              chatMessage.content
-                            }
-                          </ReactMarkdown>
-                        </div>
-                      ) : (
-                        <div className="user-message-text">
-                          {
-                            chatMessage.content
-                          }
-                        </div>
-                      )}
-                    </div>
+              activeConversation.messages.map((chatMessage) => (
+                <article key={chatMessage.id} className={`message-card ${chatMessage.role}`}>
+                  <div className="message-meta">
+                    <strong>{chatMessage.role === "user" ? "คุณ" : "AI Data Agent"}</strong>
+                    <span>{formatTime(chatMessage.createdAt)}</span>
                   </div>
-                ),
-              )
+                  <div className="message-content">
+                    {chatMessage.role === "assistant" ? (
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{chatMessage.content}</ReactMarkdown>
+                    ) : (
+                      <p>{chatMessage.content}</p>
+                    )}
+                  </div>
+                </article>
+              ))
             )}
 
             {sending && (
-              <div className="chat-message-row assistant">
-                <div className="chat-message-bubble assistant ai-thinking">
-                  กำลังวิเคราะห์...
-                </div>
-              </div>
+              <article className="message-card assistant thinking-card">
+                <div className="message-meta"><strong>AI Data Agent</strong></div>
+                <div className="message-content"><p>กำลังวิเคราะห์...</p></div>
+              </article>
             )}
           </div>
 
-          {errorText && (
-            <div className="error-box">
-              {errorText}
-            </div>
-          )}
+          {errorText && <div className="workspace-error">{errorText}</div>}
 
-          <form
-            onSubmit={handleAsk}
-            className="chat-form"
-          >
+          <form className="chat-form-v2" onSubmit={handleAsk}>
             <textarea
-              rows={4}
+              rows={3}
               value={message}
-              onChange={(e) =>
-                setMessage(e.target.value)
-              }
-              placeholder="เช่น สรุปข้อมูลนี้ และชี้ประเด็นที่ควรตรวจสอบ"
+              onChange={(event) => setMessage(event.target.value)}
+              placeholder="ถามเกี่ยวกับข้อมูล..."
             />
-
-            <button
-              type="submit"
-              disabled={
-                sending || !message.trim()
-              }
-            >
-              {sending
-                ? "กำลังวิเคราะห์..."
-                : "ส่งให้ AI"}
+            <button type="submit" disabled={sending || !message.trim()}>
+              {sending ? "กำลังวิเคราะห์..." : "ส่ง"}
             </button>
           </form>
         </section>
