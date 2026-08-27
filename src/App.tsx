@@ -3,10 +3,18 @@ import type { Session } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabase";
 import LoginPage from "./pages/LoginPage";
 import WorkspacePage from "./pages/WorkspacePage";
+import AdminPage from "./pages/AdminPage";
+
+type AppView = "workspace" | "admin";
+
+function getViewFromHash(): AppView {
+  return window.location.hash === "#admin" ? "admin" : "workspace";
+}
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [view, setView] = useState<AppView>(getViewFromHash);
 
   useEffect(() => {
     let active = true;
@@ -24,9 +32,16 @@ export default function App() {
       },
     );
 
+    const handleHashChange = () => {
+      setView(getViewFromHash());
+    };
+
+    window.addEventListener("hashchange", handleHashChange);
+
     return () => {
       active = false;
       listener.subscription.unsubscribe();
+      window.removeEventListener("hashchange", handleHashChange);
     };
   }, []);
 
@@ -42,5 +57,23 @@ export default function App() {
     return <LoginPage />;
   }
 
-  return <WorkspacePage session={session} />;
+  if (view === "admin") {
+    return (
+      <AdminPage
+        session={session}
+        onBack={() => {
+          window.location.hash = "";
+        }}
+      />
+    );
+  }
+
+  return (
+    <WorkspacePage
+      session={session}
+      onOpenAdmin={() => {
+        window.location.hash = "admin";
+      }}
+    />
+  );
 }

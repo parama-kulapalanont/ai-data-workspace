@@ -4,6 +4,7 @@ import { supabase } from "../lib/supabase";
 
 type Props = {
   session: Session;
+  onOpenAdmin: () => void;
 };
 
 type RoleRow = {
@@ -33,7 +34,7 @@ type AiResponse = {
   };
 };
 
-export default function WorkspacePage({ session }: Props) {
+export default function WorkspacePage({ session, onOpenAdmin }: Props) {
   const [role, setRole] = useState<string>("กำลังโหลด...");
   const [datasets, setDatasets] = useState<DatasetRow[]>([]);
   const [datasetsLoading, setDatasetsLoading] = useState(true);
@@ -128,6 +129,8 @@ export default function WorkspacePage({ session }: Props) {
     await supabase.auth.signOut();
   }
 
+  const isAdmin = role === "ADMIN" || role === "SUPER_ADMIN";
+
   return (
     <main className="app-shell">
       <header className="app-header">
@@ -141,6 +144,17 @@ export default function WorkspacePage({ session }: Props) {
             <div>{session.user.email}</div>
             <small>Role: {role}</small>
           </div>
+
+          {isAdmin && (
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={onOpenAdmin}
+            >
+              Admin Console
+            </button>
+          )}
+
           <button
             className="secondary-button"
             type="button"
@@ -184,11 +198,11 @@ export default function WorkspacePage({ session }: Props) {
             </div>
           )}
 
-          {(role === "ADMIN" || role === "SUPER_ADMIN") && (
+          {isAdmin && (
             <div className="admin-note">
-              <strong>Admin access detected</strong>
+              <strong>Administrator</strong>
               <span>
-                เมนูหลังบ้านจะเพิ่มในขั้นถัดไป
+                จัดการข้อมูล การเชื่อมต่อ Agent และผู้ใช้ได้จาก Admin Console
               </span>
             </div>
           )}
