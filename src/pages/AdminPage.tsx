@@ -21,6 +21,15 @@ type DatasetRow = {
   column_count: number;
 };
 
+type ProcessDatasetResponse = {
+  ok?: boolean;
+  dataset_id?: string;
+  row_count?: number;
+  column_count?: number;
+  status?: string;
+  error?: string;
+};
+
 const ALLOWED_EXTENSIONS = new Set(["csv", "xlsx", "xls"]);
 
 function getExtension(filename: string) {
@@ -200,11 +209,40 @@ export default function AdminPage({ session, onBack }: Props) {
       return;
     }
 
+    const { data: processResult, error: processError } =
+      await supabase.functions.invoke<ProcessDatasetResponse>(
+        "process-dataset",
+        {
+          body: {
+            dataset_id: dataset.id,
+          },
+        },
+      );
+
+    if (processError) {
+      setUploadError(
+        `อัปโหลดไฟล์สำเร็จ แต่ประมวลผล Dataset ไม่สำเร็จ: ${processError.message}`,
+      );
+      setUploading(false);
+      await loadDatasets();
+      return;
+    }
+
+    if (!processResult?.ok) {
+      setUploadError(
+        processResult?.error ||
+          "อัปโหลดไฟล์สำเร็จ แต่ process-dataset ไม่สามารถประมวลผลข้อมูลได้",
+      );
+      setUploading(false);
+      await loadDatasets();
+      return;
+    }
+
     setDatasetName("");
     setDescription("");
     setFile(null);
     setUploadSuccess(
-      "อัปโหลดสำเร็จ Dataset อยู่ในสถานะ PROCESSING รอขั้นตอนอ่านโครงสร้างข้อมูล",
+      `Dataset พร้อมใช้งาน: ${processResult.row_count ?? 0} rows · ${processResult.column_count ?? 0} columns · READY`,
     );
     setUploading(false);
     await loadDatasets();
@@ -341,7 +379,7 @@ export default function AdminPage({ session, onBack }: Props) {
               )}
 
               <button type="submit" disabled={uploading}>
-                {uploading ? "กำลังอัปโหลด..." : "Upload Dataset"}
+                {uploading ? "กำลังอัปโหลดและประมวลผล..." : "Upload Dataset"}
               </button>
             </form>
 
