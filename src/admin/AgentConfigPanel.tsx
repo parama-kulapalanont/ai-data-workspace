@@ -1,17 +1,16 @@
 import { FormEvent, useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
-import type { AgentConfigRow, AgentPromptRow, AgentPromptVersionRow } from "./types";
+import type { AgentConfigRow, AgentPromptRow } from "./types";
 
 type Props = {
   session: Session;
   canEdit: boolean;
 };
 
-export default function AgentConfigPanel({ session, canEdit }: Props) {
+export default function AgentConfigPanel({ session: _session, canEdit }: Props) {
   const [agent, setAgent] = useState<AgentConfigRow | null>(null);
   const [prompt, setPrompt] = useState<AgentPromptRow | null>(null);
-  const [versions, setVersions] = useState<AgentPromptVersionRow[]>([]);
   const [promptText, setPromptText] = useState("");
   const [model, setModel] = useState("");
   const [temperature, setTemperature] = useState("0.2");
@@ -52,21 +51,20 @@ export default function AgentConfigPanel({ session, canEdit }: Props) {
     const promptRow = prompts[0] as AgentPromptRow;
     setPrompt(promptRow);
 
-    const { data: versionRows, error: versionError } = await supabase
+    const { data: activeVersion, error: versionError } = await supabase
       .from("agent_prompt_versions")
-      .select("id,prompt_id,version,prompt_text,created_at")
+      .select("prompt_text")
       .eq("prompt_id", promptRow.id)
-      .order("version", { ascending: false });
+      .eq("version", promptRow.active_version)
+      .single<{ prompt_text: string }>();
 
-    if (versionError) {
-      setErrorText(versionError.message);
+    if (versionError || !activeVersion) {
+      setErrorText(versionError?.message || "ไม่พบ Prompt ปัจจุบัน");
+      setPromptText("");
       return;
     }
 
-    const list = (versionRows ?? []) as AgentPromptVersionRow[];
-    setVersions(list);
-    const active = list.find((item) => item.version === promptRow.active_version) ?? list[0];
-    setPromptText(active?.prompt_text ?? "");
+    setPromptText(activeVersion.prompt_text ?? "");
   }
 
   useEffect(() => { void load(); }, []);
@@ -74,6 +72,7 @@ export default function AgentConfigPanel({ session, canEdit }: Props) {
   async function saveConfig(event: FormEvent) {
     event.preventDefault();
     if (!agent || !canEdit) return;
+
     setBusy(true);
     setMessage("");
     setErrorText("");
@@ -97,51 +96,24 @@ export default function AgentConfigPanel({ session, canEdit }: Props) {
 
   async function savePrompt() {
     if (!prompt || !canEdit || !promptText.trim()) return;
+
     setBusy(true);
     setMessage("");
     setErrorText("");
 
-    const nextVersion = Math.max(0, ...versions.map((item) => item.version)) + 1;
-    const { error: insertError } = await supabase
-      .from("agent_prompt_versions")
-      .insert({
-        prompt_id: prompt.id,
-        version: nextVersion,
-        prompt_text: promptText.trim(),
-        created_by: session.user.id,
-      });
-
-    if (insertError) {
-      setErrorText(insertError.message);
-      setBusy(false);
-      return;
-    }
-
-    const { error: activateError } = await supabase
-      .from("agent_prompts")
-      .update({
-        active_version: nextVersion,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", prompt.id);
-
-    if (activateError) setErrorText(activateError.message);
-    else setMessage(`สร้างและเปิดใช้ System Prompt version ${nextVersion} แล้ว`);
-
-    setBusy(false);
-    await load();
-  }
-
-  async function activateVersion(version: number) {
-    if (!prompt || !canEdit) return;
-    setBusy(true);
     const { error } = await supabase
-      .from("agent_prompts")
-      .update({ active_version: version, updated_at: new Date().toISOString() })
-      .eq("id", prompt.id);
+      .from("agent_prompt_versions")
+      .update({
+        prompt_text: promptText.trim(),
+      })
+      .eq("prompt_id", prompt.id)
+      .eq("version", prompt.active_version);
 
-    if (error) setErrorText(error.message);
-    else setMessage(`เปิดใช้ Prompt version ${version} แล้ว`);
+    if (error) {
+      setErrorText(error.message);
+    } else {
+      setMessage("บันทึก System Prompt ปัจจุบันแล้ว");
+    }
 
     setBusy(false);
     await load();
@@ -152,11 +124,16 @@ export default function AgentConfigPanel({ session, canEdit }: Props) {
       <div className="section-heading">
         <div>
           <h2>Agent Configuration</h2>
-          <p className="muted">จัดการ Model และ System Prompt แบบมี Version</p>
+          <p className="muted">จัดการ Model และ System Prompt ปัจจุบัน</p>
         </div>
       </div>
 
-      {!canEdit && <div className="warning-box">ADMIN ดูได้ แต่แก้ Agent configuration ได้เฉพาะ SUPER_ADMIN</div>}
+      {!canEdit && (
+        <div className="warning-box">
+          ADMIN ดูได้ แต่แก้ Agent configuration ได้เฉพาะ SUPER_ADMIN
+        </div>
+      )}
+
       {errorText && <div className="error-box">{errorText}</div>}
       {message && <div className="success-box">{message}</div>}
 
@@ -164,19 +141,32 @@ export default function AgentConfigPanel({ session, canEdit }: Props) {
         <div className="field-grid">
           <label>
             Model
-            <input disabled={!canEdit} value={model} onChange={(e) => setModel(e.target.value)} />
+            <input
+              disabled={!canEdit}
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+            />
           </label>
+
           <label>
             Temperature
-            <input disabled={!canEdit} inputMode="decimal" value={temperature} onChange={(e) => setTemperature(e.target.value)} />
+            <input
+              disabled={!canEdit}
+              inputMode="decimal"
+              value={temperature}
+              onChange={(e) => setTemperature(e.target.value)}
+            />
           </label>
         </div>
-        <button type="submit" disabled={!canEdit || busy}>บันทึก Model</button>
+
+        <button type="submit" disabled={!canEdit || busy}>
+          บันทึก Model
+        </button>
       </form>
 
       <div className="admin-form">
         <label>
-          System Prompt
+          System Prompt ปัจจุบัน
           <textarea
             rows={18}
             disabled={!canEdit}
@@ -184,26 +174,18 @@ export default function AgentConfigPanel({ session, canEdit }: Props) {
             onChange={(e) => setPromptText(e.target.value)}
           />
         </label>
-        <button type="button" disabled={!canEdit || busy} onClick={() => void savePrompt()}>
-          บันทึกเป็น Version ใหม่และเปิดใช้
-        </button>
-      </div>
 
-      <div className="admin-list">
-        <h3>Prompt Versions</h3>
-        {versions.map((item) => (
-          <div className="admin-row" key={item.id}>
-            <div>
-              <strong>Version {item.version}</strong>
-              <small>{item.version === prompt?.active_version ? "ACTIVE" : new Date(item.created_at).toLocaleString()}</small>
-            </div>
-            {item.version !== prompt?.active_version && (
-              <button className="secondary-button" type="button" disabled={!canEdit || busy} onClick={() => void activateVersion(item.version)}>
-                เปิดใช้ Version นี้
-              </button>
-            )}
-          </div>
-        ))}
+        <button
+          type="button"
+          disabled={!canEdit || busy || !promptText.trim()}
+          onClick={() => void savePrompt()}
+        >
+          {busy ? "กำลังบันทึก..." : "บันทึก Prompt ปัจจุบัน"}
+        </button>
+
+        <p className="muted" style={{ marginBottom: 0 }}>
+          ระบบเก็บเฉพาะ Prompt ที่ใช้งานอยู่ ไม่สร้าง Version ใหม่ทุกครั้งที่แก้ไข
+        </p>
       </div>
     </div>
   );
