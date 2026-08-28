@@ -8,6 +8,10 @@ export type DatasetRow = {
   status: string;
   row_count: number;
   column_count: number;
+  ingestion_status?: "NOT_INGESTED" | "PROCESSING" | "READY" | "ERROR";
+  ingested_row_count?: number;
+  ingestion_error?: string | null;
+  ingested_at?: string | null;
   created_at?: string;
 };
 
